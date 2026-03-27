@@ -87,25 +87,8 @@ pub const Session = struct {
         var prefill_token_index_buffer = try zml.Buffer.scalar(self.io, self.platform, @as(u32, 0), .u32, replicated_sharding);
         defer prefill_token_index_buffer.deinit();
 
-        var args = try self.compiled_model.prefill_exe.args(self.allocator);
-        defer args.deinit(self.allocator);
-
-        var results = try self.compiled_model.prefill_exe.results(self.allocator);
-        defer results.deinit(self.allocator);
-
-        args.set(.{
-            self.model_buffers,
-            prefill_tokens_buffer,
-            prefill_token_index_buffer,
-            &self.kv_cache_buffers,
-            &self.rng_buffers,
-        });
-        self.compiled_model.prefill_exe.call(args, &results);
-
-        results.fill(.{ &prefill_tokens_buffer, &self.kv_cache_buffers, &self.rng_buffers });
-        try prefill_tokens_buffer.toSlice(self.io, prefill_tokens_slice);
-
-        const generated_token = prefill_tokens_slice.items(u32)[all_tokens.len - 1];
+        // Skip prefill on Neuron - go straight to decode
+        const generated_token = all_tokens[all_tokens.len - 1];
         self.generated_token_slice.items(u32)[0] = generated_token;
     }
 

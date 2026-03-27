@@ -1271,6 +1271,25 @@ pub const GatedDeltaNet = struct {
             }
         };
 
+        // For single-step sequences (e.g. decode), directly call step() to avoid
+        // generating while loops in the HLO, which some backends (e.g. Neuron) cannot compile.
+        if (queries.dim(.s) == 1) {
+            const step_result = step(
+                .{ .s = initial_state.s },
+                .{
+                    .q = queries.squeeze(.s),
+                    .k = keys.squeeze(.s),
+                    .v = values.squeeze(.s),
+                    .alpha = alphas.squeeze(.s),
+                    .beta = betas.squeeze(.s),
+                },
+            );
+            return .{
+                .outputs = step_result.output.insertAxes(0, .{.s}),
+                .state = .{ .s = step_result.state.s },
+            };
+        }
+
         const step0 = Tensor.scalar(0, .i32);
         const outputs0 = Tensor.zeroes(values.shape());
         const loop_state = ops.@"while"(

@@ -77,39 +77,7 @@ fn compileModel(
 
     const all_shardings = parameters.shardings.all();
 
-    var prefill_future = try io.concurrent(struct {
-        fn call(
-            allocator_: std.mem.Allocator,
-            io_: std.Io,
-            platform_: *const zml.Platform,
-            qwen_model_: model.Model,
-            parameters_: CompilationParameters,
-            shardings_: [2]zml.sharding.Sharding,
-            progress_: *std.Progress.Node,
-        ) !zml.Exe {
-            progress_.increaseEstimatedTotalItems(1);
-            var node_ = progress_.start("Compiling prefill...", 1);
-            defer node_.end();
-
-            const now_: std.Io.Timestamp = .now(io_, .awake);
-            defer log.info("Compiled prefill [{f}]", .{now_.untilNow(io_, .awake)});
-
-            return platform_.compile(
-                allocator_,
-                io_,
-                qwen_model_,
-                .forward,
-                .{
-                    parameters_.prefill_tokens,
-                    parameters_.token_index,
-                    parameters_.kv_cache,
-                    parameters_.rng,
-                },
-                .{ .shardings = &shardings_ },
-            );
-        }
-    }.call, .{ allocator, io, platform, qwen_model, parameters, all_shardings, progress });
-    errdefer if (prefill_future.cancel(io)) |v| v.deinit() else |_| {};
+    // Skip prefill compilation - will reuse decode exe below
 
     var decode_future = try io.concurrent(struct {
         fn call(
@@ -145,8 +113,10 @@ fn compileModel(
     }.call, .{ allocator, io, platform, qwen_model, parameters, all_shardings, progress });
     errdefer if (decode_future.cancel(io)) |v| v.deinit() else |_| {};
 
-    const prefill_exe = try prefill_future.await(io);
     const decode_exe = try decode_future.await(io);
+
+    // Reuse decode exe for prefill (prefill will run token-by-token)
+    const prefill_exe = decode_exe;
 
     return .{
         .prefill_exe = prefill_exe,

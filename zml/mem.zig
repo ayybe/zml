@@ -67,18 +67,38 @@ pub const UninitializedBufferAllocator = struct {
 
         const total_len = std.mem.alignForward(usize, @sizeOf(Header) + len, alignment.toByteUnits());
 
-        const pjrt_buffer = pjrt_client.createUninitializedBuffer(pjrt_api, .{
-            .dims = &.{@intCast(total_len)},
-            .element_type = .u8,
-            .layout = .{
-                .tiled = .{
-                    .minor_to_major = &.{0},
-                    .tile_dims = &.{},
-                    .tile_dims_sizes = &.{},
-                },
+        const layout: pjrt.MemoryLayout = .{
+            .tiled = .{
+                .minor_to_major = &.{0},
+                .tile_dims = &.{},
+                .tile_dims_sizes = &.{},
             },
-            .dst = .{ .memory = self.memory.pjrt_memory },
-        }) catch return null;
+        };
+        const pjrt_buffer = switch (self.memory.platform.target) {
+            .neuron => blk: {
+                // Neuron PJRT doesn't implement CreateUninitializedBuffer.
+                const zeroed = std.heap.page_allocator.alloc(u8, total_len) catch return null;
+                defer std.heap.page_allocator.free(zeroed);
+                @memset(zeroed, 0);
+                const buf, const event = pjrt_client.bufferFromHostBuffer(pjrt_api, .{
+                    .data = zeroed.ptr,
+                    .buffer_type = .u8,
+                    .dims = &.{@intCast(total_len)},
+                    .byte_strides = null,
+                    .layout = layout,
+                    .host_buffer_semantics = .ImmutableOnlyDuringCall,
+                    .dst = .{ .memory = self.memory.pjrt_memory },
+                }) catch return null;
+                if (event) |ev| ev.deinit(pjrt_api);
+                break :blk buf;
+            },
+            else => pjrt_client.createUninitializedBuffer(pjrt_api, .{
+                .dims = &.{@intCast(total_len)},
+                .element_type = .u8,
+                .layout = layout,
+                .dst = .{ .memory = self.memory.pjrt_memory },
+            }) catch return null,
+        };
 
         const opaque_ptr: [*]u8 = @ptrCast(pjrt_buffer.opaqueDeviceMemoryDataPointer(pjrt_api) catch unreachable);
         const data_with_header: []u8 = opaque_ptr[0..total_len];

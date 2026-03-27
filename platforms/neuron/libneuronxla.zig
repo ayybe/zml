@@ -192,14 +192,25 @@ fn neuronx_cc_(self: ?*c.PyObject, args_: [*c]*c.PyObject, nargs_: c.Py_ssize_t)
     const neff_file = try std.Io.Dir.path.join(arena.allocator(), &.{ tmp_dir, "file.neff" });
 
     var neuronx_cc_buf: [std.Io.Dir.max_path_bytes]u8 = undefined;
+    var exe_buf: [4096]u8 = undefined;
+    const exe_len = std.c.readlink("/proc/self/exe", &exe_buf, exe_buf.len);
+    const exe_dir = if (exe_len > 0) std.fs.path.dirname(exe_buf[0..@intCast(exe_len)]).? else ".";
+    // Build runfiles path from exe name
+    const exe_name = std.fs.path.basename(exe_buf[0..@intCast(exe_len)]);
+    var runfiles_buf: [256]u8 = undefined;
+    const runfiles_name = std.fmt.bufPrint(&runfiles_buf, "{s}.runfiles", .{exe_name}) catch "llm.runfiles";
+    const cc_path = try stdx.Io.Dir.path.bufJoin(&neuronx_cc_buf, &.{
+        exe_dir,
+        runfiles_name,
+        "+neuron_packages+libpjrt_neuron",
+        "sandbox",
+        "bin",
+        "neuronx-cc",
+    });
+
     var child = try std.process.spawn(io, .{
         .argv = &.{
-            try stdx.Io.Dir.path.bufJoin(&neuronx_cc_buf, &.{
-                stdx.process.selfSharedObjectDirPath(),
-                "..",
-                "bin",
-                "neuronx-cc",
-            }),
+            cc_path,
             "compile",
             "--framework=XLA",
             "--target",

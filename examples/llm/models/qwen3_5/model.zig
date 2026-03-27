@@ -874,19 +874,16 @@ pub const KvCache = struct {
 
         pub fn update(self: SelfAttnCache, new_k: zml.Tensor, new_v: zml.Tensor, token_index: ?zml.Tensor) SelfAttnCache {
             const k_shape = self.k.shape().drop(.layer);
-            var layer = self.layer_index;
-            layer = if (token_index) |idx| layer.broad(idx.shape()) else layer;
+            const layer = self.layer_index;
 
             return if (token_index) |idx| .{
-                .k = self.k.scatterSlices(
+                .k = self.k.dynamicUpdateSlice(
                     .{ .layer = layer, .s = idx },
                     new_k.convert(self.k.dtype()).transpose(k_shape),
-                    .{ .indices_are_sorted = true, .update_fn = zml.Tensor.ScatterOpts.override },
                 ).reuseBuffer(self.k),
-                .v = self.v.scatterSlices(
+                .v = self.v.dynamicUpdateSlice(
                     .{ .layer = layer, .s = idx },
                     new_v.convert(self.v.dtype()).transpose(k_shape),
-                    .{ .indices_are_sorted = true, .update_fn = zml.Tensor.ScatterOpts.override },
                 ).reuseBuffer(self.v),
                 .layer_index = self.layer_index,
             } else .{

@@ -218,14 +218,33 @@ pub const Buffer = struct {
                     },
                 },
             };
-            const args: pjrt.Client.CreateUninitializedBufferArgs = .{
-                .dims = shard.shape.dims(),
-                .element_type = pjrtx.bufferTypeFromDtype(shard.shape.dtype()),
-                .layout = layout,
-                .dst = .{ .memory = shard.memory(platform, opts.memory).pjrt_memory },
+            const shard_buffer = switch (platform.target) {
+                .neuron => blk: {
+                    // Neuron PJRT doesn't implement CreateUninitializedBuffer.
+                    // Fall back to BufferFromHostBuffer with zeroed host data.
+                    const byte_size = shard.shape.byteSize();
+                    const zeroed = try std.heap.page_allocator.alloc(u8, byte_size);
+                    defer std.heap.page_allocator.free(zeroed);
+                    @memset(zeroed, 0);
+                    const buf, const event = try platform.pjrt_client.bufferFromHostBuffer(platform.pjrt_api, .{
+                        .data = zeroed.ptr,
+                        .buffer_type = pjrtx.bufferTypeFromDtype(shard.shape.dtype()),
+                        .dims = shard.shape.dims(),
+                        .byte_strides = null,
+                        .layout = layout,
+                        .host_buffer_semantics = .ImmutableOnlyDuringCall,
+                        .dst = .{ .memory = shard.memory(platform, opts.memory).pjrt_memory },
+                    });
+                    if (event) |ev| ev.deinit(platform.pjrt_api);
+                    break :blk buf;
+                },
+                else => try platform.pjrt_client.createUninitializedBuffer(platform.pjrt_api, .{
+                    .dims = shard.shape.dims(),
+                    .element_type = pjrtx.bufferTypeFromDtype(shard.shape.dtype()),
+                    .layout = layout,
+                    .dst = .{ .memory = shard.memory(platform, opts.memory).pjrt_memory },
+                }),
             };
-
-            const shard_buffer = try platform.pjrt_client.createUninitializedBuffer(platform.pjrt_api, args);
             res._shards.appendAssumeCapacity(shard_buffer);
         }
 
